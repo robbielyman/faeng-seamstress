@@ -4,9 +4,7 @@
 local sequins = require "sequins"
 local lattice = require "lattice"
 local musicutil = require "musicutil"
-local Track = require "lib.track"
-local Pagemaker = require "lib.page"
-local Pages = nil
+local counter = 0
 
 Grid = grid.connect()
 Presses = {}
@@ -18,6 +16,7 @@ Tracks = {}
 PATTERNS = 16
 PAGES = 5
 Page = 0
+Playing = {}
 Alt_Page = false
 Pattern = 1
 MODS = 3
@@ -28,11 +27,38 @@ Grid_Dirty = true
 Scale_Names = {}
 Lattice = lattice.new()
 for i = 1, #musicutil.SCALES do
-	table.insert(Scale_Names, musicutil.SCALES[i].name)
+  table.insert(Scale_Names, musicutil.SCALES[i].name)
 end
 Dance_Index = 1
+Midi = midi.connect_output()
 
 Scale = nil
+
+local Trackmaker = require 'lib.track'
+Track = nil
+local Pagemaker = require "lib.page"
+Pages = nil
+local Notes = {}
+
+local function note_off(note, id)
+  local c = Notes[id][note]
+  Midi:note_off(note, 100, id)
+  Notes[id][note] = nil
+  if c then
+    clock.cancel(c)
+  end
+end
+
+local function note_on(note, velocity, duration, id)
+  clock.sync(duration / 16)
+  Midi:note_on(note, velocity, id)
+  clock.sync(duration, duration)
+  Midi:note_off(note, 0, id)
+end
+
+function Manage_Polyphony(note, velocity, duration, id)
+  clock.run(note_on, note, velocity, duration, id)
+end
 
 local function build_scale()
   local note_nums = musicutil.generate_scale_of_length(params:get('root_note'), params:get('scale'), 127)
@@ -61,16 +87,14 @@ local function nav_bar(x, z)
     -- scroll left
     if z == 0 then
       Active_Track = Active_Track - 1 < 1 and TRACKS or Active_Track - 1
-      Set_Current_Voice(Get_Current_Voice())
-      Engine_UI.screen_callback()
+      redraw()
     end
     return z
   elseif x == 4 then
     -- scroll right
     if z == 0 then
       Active_Track = Active_Track + 1 > TRACKS and 1 or Active_Track + 1
-      Set_Current_Voice(Get_Current_Voice())
-      Engine_UI.screen_callback()
+      redraw()
     end
     return z
   elseif x >= 5 + 1 and x <= 5 + PAGES then
@@ -103,11 +127,11 @@ local function nav_bar(x, z)
   end
 end
 
-local function loop_mod(x, y, z)
+function loop_mod(x, y, z)
   local track = Tracks[Active_Track]
   local page = Page
   if Page == -1 then
-    track = Tracks[TRACKS+1]
+    track = Tracks[TRACKS + 1]
   end
   if Alt_Page then page = page + PAGES end
   if z ~= 0 then return z end
@@ -131,12 +155,12 @@ local function loop_mod(x, y, z)
   return z, x, math.min(x + length, 16)
 end
 
-local function handle_subsequins(x, y, z, handler, default)
+function handle_subsequins(x, y, z, handler, default)
   if z ~= 0 then return z end
   local track = Tracks[Active_Track]
   local page = Page
   if Page == -1 then
-    track = Tracks[TRACKS+1]
+    track = Tracks[TRACKS + 1]
   end
   if Alt_Page then page = page + PAGES end
   local datum
@@ -152,7 +176,7 @@ local function handle_subsequins(x, y, z, handler, default)
         datum[i] = default
       end
     elseif x < #datum then
-      for i = x+1, #datum do
+      for i = x + 1, #datum do
         datum[i] = nil
       end
     end
@@ -171,15 +195,15 @@ local function handle_subsequins(x, y, z, handler, default)
   return z
 end
 
-local function grid_long_press(x, y)
-	clock.sleep(1)
+function grid_long_press(x, y)
+  clock.sleep(1)
   Press_Counter[x][y] = nil
   if y == 8 or Mod > 0 or SubSequins > 0 then return end
   if Page == -1 and y == 1 then
     -- copy pattern
     for i = 1, TRACKS do
       local track = Tracks[i]
-      track:copy(Tracks[TRACKS+1].data[Tracks[TRACKS+1].selected], x)
+      track:copy(Tracks[TRACKS + 1].data[Tracks[TRACKS + 1].selected], x)
     end
     Grid_Dirty = true
     redraw()
@@ -198,58 +222,64 @@ local function patterns_key(x, y, z)
   if Mod == 1 and y == 4 then
     local press, left, right = loop_mod(x, y, z)
     if left and right then
-      Tracks[TRACKS+1].bounds[1] = left
-      Tracks[TRACKS+1].bounds[2] = right
+      Tracks[TRACKS + 1].bounds[1] = left
+      Tracks[TRACKS + 1].bounds[2] = right
     end
     return press
   end
   if SubSequins > 0 and y == 4 then
-    return handle_subsequins(x, y, z, function (_, current)
-      if x <= #Tracks[TRACKS+1].data[SubSequins] then
-        Tracks[TRACKS+1].selected = x
+    return handle_subsequins(x, y, z, function(_, current)
+      if x <= #Tracks[TRACKS + 1].data[SubSequins] then
+        Tracks[TRACKS + 1].selected = x
       end
-      Tracks[TRACKS+1]:make_sequins()
+      Tracks[TRACKS + 1]:make_sequins()
       return current
     end, 1)
   end
   if SubSequins > 0 and y == 1 then
     if z ~= 0 then return z end
     -- set selection
-    Tracks[TRACKS+1].data[SubSequins][Tracks[TRACKS+1].selected] = x
-    Tracks[TRACKS+1]:make_sequins()
+    Tracks[TRACKS + 1].data[SubSequins][Tracks[TRACKS + 1].selected] = x
+    Tracks[TRACKS + 1]:make_sequins()
     return z
   end
   if y == 1 then
-    if z ~= 0 then Press_Counter[x][y] = clock.run(grid_long_press, x, y) return z end
+    if z ~= 0 then
+      Press_Counter[x][y] = clock.run(grid_long_press, x, y)
+      return z
+    end
     if not Press_Counter[x][y] then return z end
     clock.cancel(Press_Counter[x][y])
-    Tracks[TRACKS+1].data[Tracks[TRACKS+1].selected] = x
-    Tracks[TRACKS+1]:make_sequins()
+    Tracks[TRACKS + 1].data[Tracks[TRACKS + 1].selected] = x
+    Tracks[TRACKS + 1]:make_sequins()
     return z
   end
   if y == 4 then
-    if z ~= 0 then Press_Counter[x][y] = clock.run(grid_long_press, x, y) return z end
+    if z ~= 0 then
+      Press_Counter[x][y] = clock.run(grid_long_press, x, y)
+      return z
+    end
     if not Press_Counter[x][y] then return z end
     clock.cancel(Press_Counter[x][y])
-    Tracks[TRACKS+1].selected = x
+    Tracks[TRACKS + 1].selected = x
     return z
   end
   if y == 6 then
     if z ~= 0 then return z end
-    Tracks[TRACKS+1].lengths[Tracks[TRACKS+1].selected] = x
+    Tracks[TRACKS + 1].lengths[Tracks[TRACKS + 1].selected] = x
     return z
   end
 end
 
 local function division_key(x, y, z)
-	local track = Tracks[Active_Track]
+  local track = Tracks[Active_Track]
   local page = Page
   if Alt_Page then page = page + PAGES end
   if y == 2 then
-    if z ~= 0  then return z end
+    if z ~= 0 then return z end
     if Page == -1 then
-      Tracks[TRACKS+1].divisions[1] = x
-      Tracks[TRACKS+1]:update()
+      Tracks[TRACKS + 1].divisions[1] = x
+      Tracks[TRACKS + 1]:update()
     else
       track.divisions[page][Pattern][1] = x
       track:update()
@@ -258,8 +288,8 @@ local function division_key(x, y, z)
   elseif y == 4 then
     if z ~= 0 then return z end
     if Page == -1 then
-      Tracks[TRACKS+1].divisions[2] = x
-      Tracks[TRACKS+1]:update()
+      Tracks[TRACKS + 1].divisions[2] = x
+      Tracks[TRACKS + 1]:update()
     else
       track.divisions[page][Pattern][2] = x
       track:update()
@@ -279,13 +309,13 @@ local function division_key(x, y, z)
 end
 
 local function probability_key(x, y, z)
-	local track = Tracks[Active_Track]
+  local track = Tracks[Active_Track]
   local page = Page
   if Alt_Page then page = page + PAGES end
   if y < 3 then return end
   if z ~= 0 then return z end
   if Page == -1 then
-    Track[TRACKS+1].probabilities[x] = TRACKS - y
+    Track[TRACKS + 1].probabilities[x] = TRACKS - y
   else
     track.probabilities[page][Pattern][x] = TRACKS - y
   end
@@ -293,7 +323,7 @@ local function probability_key(x, y, z)
 end
 
 local function tracks_key(x, y, z)
-	if x == 1 then
+  if x == 1 then
     -- select track
     if z ~= 0 then return z end
     Active_Track = y
@@ -312,7 +342,7 @@ local function tracks_key(x, y, z)
 end
 
 local function grid_key(x, y, z)
-	local press
+  local press
   if y == ROWS then
     press = nav_bar(x, z)
   elseif Page == 0 then
@@ -326,7 +356,7 @@ local function grid_key(x, y, z)
   else
     local page = Page
     if Alt_Page then page = page + PAGES end
-    press = Pages[page].key(x,y,z)
+    press = Tracks[Active_Track].keys[page](x, y, z)
   end
   if z == 0 then press = 0 end
   if press then
@@ -338,7 +368,7 @@ end
 
 local function nav_bar_view()
   -- track page
-	if SubSequins > 0 and Mod == 0 then
+  if SubSequins > 0 and Mod == 0 then
     Grid:led(1, 8, Dance_Index % 2 == 1 and 15 or 9)
   else
     Grid:led(1, 8, Page == 0 and 15 or 9)
@@ -367,14 +397,14 @@ local function nav_bar_view()
 end
 
 local function division_view()
-	if Page == 0 then
+  if Page == 0 then
     Mod = 0
     Grid_Dirty = true
     return
   end
   for i = 1, 16 do
-    Grid:led(x, 2, 4)
-    Grid:led(x, 4, 4)
+    Grid:led(i, 2, 4)
+    Grid:led(i, 4, 4)
   end
   local page = Page
   if Alt_Page then page = page + PAGES end
@@ -383,14 +413,14 @@ local function division_view()
     Grid:led(Tracks[Active_Track].divisions[page][Pattern][2], 4, 15)
     Grid:led(Tracks[Active_Track].swings[page][Pattern], 6, 15)
   else
-    Grid:led(Tracks[TRACKS+1].divisions[1], 2, 15)
-    Grid:led(Tracks[TRACKS+1].divisions[2], 4, 15)
-    Grid:led(Tracks[TRACKS+1].swings, 6, 15)
+    Grid:led(Tracks[TRACKS + 1].divisions[1], 2, 15)
+    Grid:led(Tracks[TRACKS + 1].divisions[2], 4, 15)
+    Grid:led(Tracks[TRACKS + 1].swings, 6, 15)
   end
 end
 
-local function  probability_view()
-	if Page == 0 then
+local function probability_view()
+  if Page == 0 then
     Mod = 0
     Grid_Dirty = true
     return
@@ -405,31 +435,30 @@ local function  probability_view()
       local right = track.bounds[page][Pattern][2]
       local check = x >= left and x <= right
       for i = 4, value, -1 do
-        Grid:led(x, TRACKS-i, check and 9 or 4)
+        Grid:led(x, TRACKS - i, check and 9 or 4)
       end
       if track.index[page] == x then
-        Grid:led(x, TRACKS-value, 15)
+        Grid:led(x, TRACKS - value, 15)
       end
     end
   else
     for x = 1, 16 do
-      local value = Tracks[TRACKS+1].probabilities[x]
-      local left = Tracks[TRACKS+1].bounds[1]
-      local right = Tracks[TRACKS+1].bounds[2]
+      local value = Tracks[TRACKS + 1].probabilities[x]
+      local left = Tracks[TRACKS + 1].bounds[1]
+      local right = Tracks[TRACKS + 1].bounds[2]
       local check = x >= left and x <= right
       for i = 4, value, -1 do
-        Grid:led(x, TRACKS-i, check and 9 or 4)
+        Grid:led(x, TRACKS - i, check and 9 or 4)
       end
-      if Tracks[TRACKS+1].index == x then
-        Grid:led(x, TRACKS-value, 15)
+      if Tracks[TRACKS + 1].index == x then
+        Grid:led(x, TRACKS - value, 15)
       end
     end
   end
 end
 
 local function tracks_view()
-	for y = 1, TRACKS do
-    Grid:led(3, y, 4)
+  for y = 1, TRACKS do
     Grid:led(2, y, Tracks[y].muted and 4 or 9)
     if Active_Track == y then
       Grid:led(1, y, Playing[y] == 1 and 15 or 12)
@@ -440,15 +469,15 @@ local function tracks_view()
 end
 
 local function patterns_view()
-	for x = 1, 16 do
+  for x = 1, 16 do
     Grid:led(x, 1, 4)
   end
   local track = Tracks[TRACKS + 1]
   local left = track.bounds[1]
-  local right= track.bounds[2]
+  local right = track.bounds[2]
   if SubSequins > 0 then
     if type(track.data[SubSequins]) == "number" then
-      track.data[SubSequins] = {track.data[SubSequins]}
+      track.data[SubSequins] = { track.data[SubSequins] }
       track:make_sequins()
     end
     local datum = track.data[SubSequins]
@@ -481,15 +510,19 @@ local function patterns_view()
       Grid:led(x, 6, 4)
     end
 
-    Grid:led(track.legnths[track.index], 6, 9)
-    Grid:led(track.legnths[track.selected], 6, 12)
+    Grid:led(track.lengths[track.index], 6, 9)
+    Grid:led(track.lengths[track.selected], 6, 12)
     Grid:led(track.counters, 6, 15)
   end
 end
 
 local function page_view()
-	if Page == 0 then tracks_view() return
-  elseif Page == -1 then patterns_view() return
+  if Page == 0 then
+    tracks_view()
+    return
+  elseif Page == -1 then
+    patterns_view()
+    return
   end
   local page = Page
   if Alt_Page then page = page + PAGES end
@@ -498,7 +531,7 @@ local function page_view()
   local right = track.bounds[page][Pattern][2]
   if SubSequins > 0 then
     if type(track.data[page][Pattern][SubSequins]) == 'number' then
-      track.data[page][Pattern][SubSequins] = {track.data[page][Pattern][SubSequins]}
+      track.data[page][Pattern][SubSequins] = { track.data[page][Pattern][SubSequins] }
       track:make_sequins(page)
     end
     local datum = track.data[page][Pattern][SubSequins]
@@ -522,16 +555,19 @@ local function page_view()
 end
 
 local function grid_redraw()
-	Grid_Dirty = false
+  Grid_Dirty = false
   Grid:all(0)
   nav_bar_view()
   if Mod == 1 and Page == 0 then
     Mod = 0
     Grid_Dirty = true
   end
-  if Mod == 2 then division_view()
-  elseif Mod == 3 then probability_view()
-  else page_view()
+  if Mod == 2 then
+    division_view()
+  elseif Mod == 3 then
+    probability_view()
+  else
+    page_view()
   end
   for x = 1, 16 do
     for y = 1, TRACKS + 1 do
@@ -548,53 +584,68 @@ local function grid_redraw()
 end
 
 function init()
-  params:add {
-    type = 'number',
-    id = 'root_note',
-    name = 'root note',
-    min = 0,
-    max = 127,
-    default = 60,
-    formatter = function (param)
-      return musicutil.note_num_to_name(param:get(), true)
-    end,
-    action = build_scale
-  }
-  params:add {
-    type = 'option',
-    id = 'scale',
-    name = 'scale',
-    options = Scale_Names,
-    default = 5,
-    action = build_scale
-  }
-  params:bang()
-  build_scale()
-  if Grid.device == nil then redraw() return end
-  Pages = Pagemaker(Grid.rows)
-	TRACKS = Grid.rows - 1
-  ROWS = Grid.rows
-  for i = 1, TRACKS do
-    Tracks[i] = Track.new(i)
+  if counter == 0 then
+    counter = counter + 1
+    params:add {
+      type = 'number',
+      id = 'root_note',
+      name = 'root note',
+      min = 0,
+      max = 127,
+      default = 60,
+      formatter = function(param)
+        return musicutil.note_num_to_name(param:get(), true)
+      end,
+    }
+    params:set_action("root_note", build_scale)
+    params:add {
+      type = 'option',
+      id = 'scale',
+      name = 'scale',
+      options = Scale_Names,
+      default = 5,
+    }
+    params:set_action("scale", build_scale)
+    params:bang()
   end
-  Tracks[TRACKS+1] = Track.pattern_new()
+  build_scale()
+  if Grid.device == nil then
+    redraw()
+    return
+  end
+  Pages = Pagemaker(Grid:rows())
+  Track = Trackmaker(Grid:rows())
+  TRACKS = Grid:rows() - 1
+  ROWS = Grid:rows()
+  for i = 1, 16 do
+    Presses[i] = {}
+    Press_Counter[i] = {}
+    for j = 1, ROWS do
+      Presses[i][j] = 0
+    end
+  end
+  for i = 1, TRACKS do
+    Notes[i] = {}
+    Tracks[i] = Track.new(i, Lattice)
+  end
+  Tracks[TRACKS + 1] = Track.pattern_new(Lattice)
   Grid.key = grid_key
   local grid_redraw_metro = metro.init()
-  grid_redraw_metro.event = function ()
+  grid_redraw_metro.event = function()
     if Grid.device and Grid_Dirty then grid_redraw() end
   end
 
   Lattice:new_sprocket {
-    division =  1/8,
+    division = 1 / 8,
     order = 1,
-    action = function ()
+    action = function()
       Dance_Index = Dance_Index % 16 + 1
       Grid_Dirty = true
     end
   }
 
   if grid_redraw_metro then
-    grid_redraw_metro:start(1/25)
+    grid_redraw_metro:start(1 / 25)
   end
   Lattice:start()
   redraw()

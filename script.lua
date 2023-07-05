@@ -40,20 +40,15 @@ local Pagemaker = require "lib.page"
 Pages = nil
 local Notes = {}
 
-local function note_off(note, id)
-  local c = Notes[id][note]
-  Midi:note_off(note, 100, id)
-  Notes[id][note] = nil
-  if c then
-    clock.cancel(c)
-  end
-end
-
 local function note_on(note, velocity, duration, id)
+  table.insert(Notes[id], note)
   clock.sync(duration / 16)
   Midi:note_on(note, velocity, id)
   clock.sync(duration, duration)
   Midi:note_off(note, 0, id)
+  clock.sleep(0.5)
+  local key = tab.key(Notes[id], note)
+  if key then table.remove(Notes[id], key) end
 end
 
 function Manage_Polyphony(note, velocity, duration, id)
@@ -634,6 +629,10 @@ function init()
   grid_redraw_metro.event = function()
     if Grid.device and Grid_Dirty then grid_redraw() end
   end
+  local screen_redraw_metro = metro.init()
+  screen_redraw_metro.event = function ()
+    redraw()
+  end
 
   Lattice:new_sprocket {
     division = 1 / 8,
@@ -647,9 +646,30 @@ function init()
   if grid_redraw_metro then
     grid_redraw_metro:start(1 / 25)
   end
+  if screen_redraw_metro then
+    screen_redraw_metro:start(1 / 15)
+  end
   Lattice:start()
   redraw()
 end
+
+local colors = {
+  {200, 50, 50},
+  {233, 100, 50},
+  {244, 150, 50},
+  {225, 200, 50},
+  {150, 224, 50},
+  {100, 233, 50},
+  {50, 200, 50},
+  {50, 233, 100},
+  {50, 244, 150},
+  {50, 225, 200},
+  {50, 150, 225},
+  {50, 100, 233},
+  {50, 50, 200},
+  {100, 50, 225},
+  {200, 50, 200},
+}
 
 function redraw()
   screen.set(1)
@@ -661,6 +681,21 @@ function redraw()
     screen.text_center("connect a grid!")
     screen.refresh()
     screen.reset()
+    return
+  end
+  screen.move(10, 20)
+  for i = 1, TRACKS do
+    screen.move_rel(0, 10)
+    screen.color(table.unpack(colors[i]))
+    screen.text("TRACK " .. i)
+    local pos = 40
+    screen.move_rel(pos, 0)
+    for _, value in ipairs(Notes[i]) do
+      screen.move_rel(10, 0)
+      pos = pos + 10
+      screen.text(musicutil.note_num_to_name(value))
+    end
+    screen.move_rel(-pos, 0)
   end
   screen.refresh()
   screen.reset()
@@ -670,4 +705,12 @@ screen.resized = redraw
 
 grid.add = function(dev)
   init()
+end
+
+cleanup = function ()
+  Grid:all(0)
+  Grid:refresh()
+  for i = 1, TRACKS do
+    Midi:cc(123, 0, i)
+  end
 end

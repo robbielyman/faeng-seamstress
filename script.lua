@@ -364,31 +364,31 @@ end
 local function nav_bar_view()
   -- track page
   if SubSequins > 0 and Mod == 0 then
-    Grid:led(1, 8, Dance_Index % 2 == 1 and 15 or 9)
+    Grid:led(1, ROWS, Dance_Index % 2 == 1 and 15 or 9)
   else
-    Grid:led(1, 8, Page == 0 and 15 or 9)
+    Grid:led(1, ROWS, Page == 0 and 15 or 9)
   end
 
   -- track scroll
   for i = 1, 2 do
-    Grid:led(2 + i, 8, 9)
+    Grid:led(2 + i, ROWS, 9)
   end
 
   -- pages
   for x = 1, PAGES do
     if Alt_Page then
-      Grid:led(x + 5, 8, x == Page and Dance_Index % 2 == 1 and 15 or 9)
+      Grid:led(x + 5, ROWS, x == Page and Dance_Index % 2 == 1 and 15 or 9)
     else
-      Grid:led(x + 5, 8, x == Page and 15 or 9)
+      Grid:led(x + 5, ROWS, x == Page and 15 or 9)
     end
   end
 
   -- mod
   for x = 1, MODS do
-    Grid:led(x + 5 + PAGES + 1, 8, x == Mod and Dance_Index % 2 == 1 and 15 or 9)
+    Grid:led(x + 5 + PAGES + 1, ROWS, x == Mod and Dance_Index % 2 == 1 and 15 or 9)
   end
 
-  Grid:led(16, 8, Page == -1 and 15 or 9)
+  Grid:led(16, ROWS, Page == -1 and 15 or 9)
 end
 
 local function division_view()
@@ -608,10 +608,10 @@ function init()
     redraw()
     return
   end
-  Pages = Pagemaker(Grid:rows())
-  Track = Trackmaker(Grid:rows())
-  TRACKS = Grid:rows() - 1
-  ROWS = Grid:rows()
+  Pages = Pagemaker(Grid.rows)
+  Track = Trackmaker(Grid.rows)
+  TRACKS = Grid.rows - 1
+  ROWS = Grid.rows
   for i = 1, 16 do
     Presses[i] = {}
     Press_Counter[i] = {}

@@ -679,7 +679,6 @@ function redraw()
     screen.color(0, 155, 155)
     screen.text_center("connect a grid!")
     screen.refresh()
-    screen.reset()
     return
   end
   screen.move(10, 20)

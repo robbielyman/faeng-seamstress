@@ -30,7 +30,7 @@ for i = 1, #musicutil.SCALES do
   table.insert(Scale_Names, musicutil.SCALES[i].name)
 end
 Dance_Index = 1
-Midi = midi.connect_output()
+Midi = midi.connect()
 
 Scale = nil
 
@@ -672,7 +672,6 @@ local colors = {
 }
 
 function redraw()
-  screen.set(1)
   screen.clear()
   if Grid.device == nil then
     local w, h = screen.get_size()
@@ -698,7 +697,6 @@ function redraw()
     screen.move_rel(-pos, 0)
   end
   screen.refresh()
-  screen.reset()
 end
 
 screen.resized = redraw
